@@ -2,17 +2,21 @@ package k8sclient
 
 import (
 	"github.com/giantswarm/apiextensions/v3/pkg/clientset/versioned"
+	versionedfake "github.com/giantswarm/apiextensions/v3/pkg/clientset/versioned/fake"
 	"github.com/giantswarm/microerror"
 	"github.com/giantswarm/micrologger"
 	apiextensionsclient "k8s.io/apiextensions-apiserver/pkg/client/clientset/clientset"
+	apiextensionsclientfake "k8s.io/apiextensions-apiserver/pkg/client/clientset/clientset/fake"
 	"k8s.io/apimachinery/pkg/runtime"
 	"k8s.io/client-go/dynamic"
+	dynamicfake "k8s.io/client-go/dynamic/fake"
 	"k8s.io/client-go/kubernetes"
 	"k8s.io/client-go/kubernetes/scheme"
 	"k8s.io/client-go/rest"
 	"k8s.io/client-go/tools/clientcmd"
 	"sigs.k8s.io/controller-runtime/pkg/client"
 	"sigs.k8s.io/controller-runtime/pkg/client/apiutil"
+	clientfake "sigs.k8s.io/controller-runtime/pkg/client/fake"
 
 	"github.com/giantswarm/k8sclient/v5/pkg/k8scrdclient"
 )
@@ -40,6 +44,110 @@ type Clients struct {
 	k8sClient  *kubernetes.Clientset
 	restClient rest.Interface
 	restConfig *rest.Config
+}
+
+func NewFakeClients(config ClientsConfig) (*Clients, error) {
+	if config.Logger == nil {
+		return nil, microerror.Maskf(invalidConfigError, "%T.Logger must not be empty", config)
+	}
+
+	var err error
+
+	var restConfig *rest.Config
+	{
+		restConfig = &rest.Config{}
+	}
+
+	var extClient *apiextensionsclient.Clientset
+	{
+		extClient, err = apiextensionsclientfake.NewSimpleClientset()
+		if err != nil {
+			return nil, microerror.Mask(err)
+		}
+	}
+
+	var crdClient *k8scrdclient.CRDClient
+	{
+		c := k8scrdclient.Config{
+			K8sExtClient: extClient,
+			Logger:       config.Logger,
+		}
+
+		crdClient, err = k8scrdclient.New(c)
+		if err != nil {
+			return nil, microerror.Mask(err)
+		}
+	}
+
+	var ctrlClient client.Client
+	{
+		if config.SchemeBuilder != nil {
+			// Extend the global client-go scheme which is used by all the tools under
+			// the hood. The scheme is required for the controller-runtime controller to
+			// be able to watch for runtime objects of a certain type.
+			schemeBuilder := runtime.SchemeBuilder(config.SchemeBuilder)
+
+			err = schemeBuilder.AddToScheme(scheme.Scheme)
+			if err != nil {
+				return nil, microerror.Mask(err)
+			}
+		}
+
+		ctrlClient, err = clientfake.NewFakeClientWithScheme(scheme.Schemecheme)
+		if err != nil {
+			return nil, microerror.Mask(err)
+		}
+	}
+
+	var dynClient dynamic.Interface
+	{
+		dynClient, err = dynamicfake.NewSimpleDynamicClient()
+		if err != nil {
+			return nil, microerror.Mask(err)
+		}
+	}
+
+	var g8sClient *versioned.Clientset
+	{
+		g8sClient, err = versionedfake.NewSimpleClientset()
+		if err != nil {
+			return nil, microerror.Mask(err)
+		}
+	}
+
+	var k8sClient *kubernetes.Clientset
+	{
+		k8sClient, err = kkubernetesfake.NewSimpleClientset()
+		if err != nil {
+			return nil, microerror.Mask(err)
+		}
+	}
+
+	var restClient rest.Interface
+	{
+		// It would be cool to use rest.RESTClientFor here but it fails
+		// because GroupVersion is not configured. So underlying core
+		// RESTClient is taken.
+		//
+		//	panic: GroupVersion is required when initializing a RESTClient
+		//
+		restClient = k8sClient.RESTClient()
+	}
+
+	c := &Clients{
+		logger: config.Logger,
+
+		crdClient:  crdClient,
+		ctrlClient: ctrlClient,
+		dynClient:  dynClient,
+		extClient:  extClient,
+		g8sClient:  g8sClient,
+		k8sClient:  k8sClient,
+		restClient: restClient,
+		restConfig: restConfig,
+	}
+
+	return c, nil
 }
 
 func NewClients(config ClientsConfig) (*Clients, error) {
