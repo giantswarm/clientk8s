@@ -11,6 +11,7 @@ import (
 	"k8s.io/client-go/dynamic"
 	dynamicfake "k8s.io/client-go/dynamic/fake"
 	"k8s.io/client-go/kubernetes"
+	kubernetesfake "k8s.io/client-go/kubernetes/fake"
 	"k8s.io/client-go/kubernetes/scheme"
 	"k8s.io/client-go/rest"
 	"k8s.io/client-go/tools/clientcmd"
@@ -39,9 +40,9 @@ type Clients struct {
 	crdClient  k8scrdclient.Interface
 	ctrlClient client.Client
 	dynClient  dynamic.Interface
-	extClient  *apiextensionsclient.Clientset
-	g8sClient  *versioned.Clientset
-	k8sClient  *kubernetes.Clientset
+	extClient  apiextensionsclient.Interface
+	g8sClient  versioned.Interface
+	k8sClient  kubernetes.Interface
 	restClient rest.Interface
 	restConfig *rest.Config
 }
@@ -55,15 +56,12 @@ func NewFakeClients(config ClientsConfig) (*Clients, error) {
 
 	var restConfig *rest.Config
 	{
-		restConfig = &rest.Config{}
+		restConfig = config.RestConfig
 	}
 
-	var extClient *apiextensionsclient.Clientset
+	var extClient apiextensionsclient.Interface
 	{
-		extClient, err = apiextensionsclientfake.NewSimpleClientset()
-		if err != nil {
-			return nil, microerror.Mask(err)
-		}
+		extClient = apiextensionsclientfake.NewSimpleClientset()
 	}
 
 	var crdClient *k8scrdclient.CRDClient
@@ -93,45 +91,22 @@ func NewFakeClients(config ClientsConfig) (*Clients, error) {
 			}
 		}
 
-		ctrlClient, err = clientfake.NewFakeClientWithScheme(scheme.Schemecheme)
-		if err != nil {
-			return nil, microerror.Mask(err)
-		}
+		ctrlClient = clientfake.NewFakeClientWithScheme(scheme.Scheme)
 	}
 
 	var dynClient dynamic.Interface
 	{
-		dynClient, err = dynamicfake.NewSimpleDynamicClient()
-		if err != nil {
-			return nil, microerror.Mask(err)
-		}
+		dynClient = dynamicfake.NewSimpleDynamicClient(scheme.Scheme)
 	}
 
-	var g8sClient *versioned.Clientset
+	var g8sClient versioned.Interface
 	{
-		g8sClient, err = versionedfake.NewSimpleClientset()
-		if err != nil {
-			return nil, microerror.Mask(err)
-		}
+		g8sClient = versionedfake.NewSimpleClientset()
 	}
 
-	var k8sClient *kubernetes.Clientset
+	var k8sClient kubernetes.Interface
 	{
-		k8sClient, err = kkubernetesfake.NewSimpleClientset()
-		if err != nil {
-			return nil, microerror.Mask(err)
-		}
-	}
-
-	var restClient rest.Interface
-	{
-		// It would be cool to use rest.RESTClientFor here but it fails
-		// because GroupVersion is not configured. So underlying core
-		// RESTClient is taken.
-		//
-		//	panic: GroupVersion is required when initializing a RESTClient
-		//
-		restClient = k8sClient.RESTClient()
+		k8sClient = kubernetesfake.NewSimpleClientset()
 	}
 
 	c := &Clients{
@@ -143,7 +118,6 @@ func NewFakeClients(config ClientsConfig) (*Clients, error) {
 		extClient:  extClient,
 		g8sClient:  g8sClient,
 		k8sClient:  k8sClient,
-		restClient: restClient,
 		restConfig: restConfig,
 	}
 
